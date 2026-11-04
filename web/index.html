@@ -57,15 +57,27 @@
   #stage { flex: 1; overflow: auto; display: flex; background: #000; min-height: 0; }
   #dropzone { margin: auto; line-height: 0; position: relative; }
   canvas#canvas { display: block; image-rendering: pixelated; }
-  /* the filtered picture lies over the emulator's canvas; the mouse still goes to the canvas below */
+  /* the rendered picture lies over the emulator's canvas; the mouse still goes to the canvas below */
   canvas#screen { position: absolute; left: 0; top: 0; pointer-events: none; display: none; }
-  body.smooth canvas#screen { display: block; }
-  body.smooth canvas#canvas { opacity: 0; }
+  body.gl canvas#screen { display: block; }
+  body.gl canvas#canvas { opacity: 0; }
   #loading { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center;
     background: var(--bg); color: var(--fg); text-align: center; padding: 16px; }
   body.started #loading { display: none; }
   progress { width: min(320px, 80vw); accent-color: var(--accent); }
   #output, #spinner, .hidden { display: none; }
+  dialog#saves { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px 20px; width: min(480px, calc(100vw - 32px)); }
+  dialog#saves::backdrop { background: rgba(0, 0, 0, .5); }
+  dialog#saves h2 { margin: 0 0 8px; font-size: 20px; }
+  dialog#saves ul { padding-left: 20px; margin: 8px 0 16px; max-height: 40vh; overflow: auto; }
+  dialog#saves .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  dialog#saves button, .filebtn { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 4px;
+    padding: 6px 14px; font-size: 15px; cursor: pointer; }
+  .filebtn input { display: none; }
+  dialog#saves .hint { color: var(--muted); font-size: 14px; margin-bottom: 0; }
+  dialog#saves .note { border: 1px solid var(--accent); border-radius: 6px; padding: 4px 12px; margin: 12px 0; background: var(--sel); }
+  dialog#saves button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--muted); }
 </style>
 </head>
 <body>
@@ -100,7 +112,7 @@
     <legend>Darstellung</legend>
     <div class="choices">
       <label class="choice"><input type="radio" name="filter" value="smooth" checked>
-        <b>Geglättet</b><span>Pixel-Art-Filter (Scale2x) für 2× und „Fenster füllen“: rundere Schrift und Kanten</span></label>
+        <b>Geglättet</b><span>Pixel-Art-Filter (Scale2x): rundere Schrift und Kanten</span></label>
       <label class="choice"><input type="radio" name="filter" value="pixel">
         <b>Pixelgenau</b><span>Jeder Pixel wird nur vergrößert</span></label>
     </div>
@@ -111,7 +123,9 @@
   <div class="notes">
     <ul>
       <li>Beim ersten Start lädt der Browser rund 40&nbsp;MB, danach geht es schneller.</li>
-      <li>Einstellungen und Spielstände bleiben in diesem Browser gespeichert (lokal, nicht auf einem Server).</li>
+      <li>Einstellungen und Spielstände bleiben in diesem Browser gespeichert (lokal, nicht auf einem Server).
+          Über <i>Spielstände</i> in der Leiste lassen sie sich als Datei sichern und wieder einlesen,
+          auch mit dem Windows-Kaiser (<code>*.ksr</code>).</li>
       <li>Die Musik spielt ein Synthesizer im Browser, sie klingt daher anders als unter Windows.</li>
       <li>Für Windows 10/11 gibt es auch einen <a href="https://github.com/termi-afk/Kaiser/releases/latest">Installer</a>.</li>
     </ul>
@@ -128,8 +142,27 @@
     <button id="scalebtn" onclick="cycleScale()">Größe: 1×</button>
     <button id="filterbtn" onclick="toggleFilter()">Geglättet</button>
     <button onclick="fullscreen()">Vollbild</button>
+    <button onclick="openSaves()">Spielstände</button>
     <button onclick="location.reload()" title="Zurück zur Auswahl">Beenden</button>
   </div>
+  <dialog id="saves">
+    <h2>Spielstände</h2>
+    <p>Gespeichert in diesem Browser, im Spiel unter <code id="savedir"></code>:</p>
+    <ul id="savelist"></ul>
+    <p class="row">
+      <label class="filebtn">Spielstand einlesen …<input type="file" id="saveupload" accept=".ksr" multiple onchange="importSaves(this.files)"></label>
+      <button onclick="document.getElementById('saves').close()">Schließen</button>
+    </p>
+    <div id="restartnote" class="note" hidden>
+      <p><b>Eingelesen.</b> Kaiser sieht neue Spielstände erst nach einem Neustart. Ein laufendes Spiel, das
+         Ihr nicht gespeichert habt, geht dabei verloren.</p>
+      <p class="row">
+        <button onclick="restartGame()">Jetzt neu starten</button>
+        <button class="secondary" onclick="document.getElementById('saves').close()">Später</button>
+      </p>
+    </div>
+    <p class="hint">Eingelesene Spielstände öffnet Ihr im Spiel mit <i>Datei → Öffnen</i>.</p>
+  </dialog>
   <div id="stage"><div id="dropzone"><canvas id="canvas" width="800" height="600" oncontextmenu="event.preventDefault()"></canvas><canvas id="screen" width="1600" height="1200"></canvas></div></div>
   <div id="loading">
     <div id="status">Lade …</div>
@@ -177,11 +210,17 @@
     const mode = document.fullscreenElement ? 'fit' : scale;
     factor = Number(mode);
     if (mode === 'fit') factor = Math.max(0.5, Math.min(stage.clientWidth / 800, stage.clientHeight / 600));
+    const w = Math.round(800 * factor), h = Math.round(600 * factor);
     for (const id of ['canvas', 'screen']) {
       const c = document.getElementById(id);
-      c.style.width = Math.round(800 * factor) + 'px';
-      c.style.height = Math.round(600 * factor) + 'px';
+      c.style.width = w + 'px';
+      c.style.height = h + 'px';
     }
+    // the rendered picture has exactly as many pixels as the screen shows (Windows scaling 125 %,
+    // 150 % ... makes that more than the CSS size)
+    const screen = document.getElementById('screen');
+    screen.width = Math.round(w * devicePixelRatio);
+    screen.height = Math.round(h * devicePixelRatio);
     document.getElementById('scalebtn').textContent = 'Größe: ' + SCALE_LABEL[scale];
     applyFilter();
   }
@@ -191,15 +230,20 @@
   }
   document.addEventListener('fullscreenchange', () => setTimeout(applyScale, 50));
 
-  // --- picture filter: Scale2x (EPX) on the GPU. Each 800x600 frame of the emulator canvas becomes
-  //     1600x1200 with the stair steps of letters and diagonals filled in, without blurring.
-  //     Wine draws text without anti-aliasing in Boxedwine, so this is what makes the text rounder.
-  let gl = null;
+  // --- rendering on the GPU, in two steps:
+  //  1. "Geglättet": Scale2x (EPX) turns each 800x600 frame into 1600x1200 and fills in the stair
+  //     steps of letters and diagonals without blurring.
+  //  2. "Sharp bilinear" scales that to the exact number of screen pixels: whole pixels where the
+  //     factor allows, a soft edge only where a pixel falls between two screen pixels. Plain
+  //     nearest-neighbour scaling by 1.5 (1x at 150 % Windows scaling) would make every other
+  //     pixel twice as wide and the text uneven.
+  let gl = null, glr = null;
   function initFilter() {
     gl = document.getElementById('screen').getContext('webgl', { alpha: false, antialias: false });
     if (!gl) return false;
-    const vs = 'attribute vec2 p; varying vec2 uv; void main() { uv = vec2(p.x, -p.y) * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }';
-    const fs = `precision mediump float;
+    const vs = `attribute vec2 p; uniform float flip; varying vec2 uv;
+      void main() { uv = p * 0.5 + 0.5; if (flip > 0.5) uv.y = 1.0 - uv.y; gl_Position = vec4(p, 0.0, 1.0); }`;
+    const epx = `precision highp float;
       uniform sampler2D t; varying vec2 uv;
       const vec2 S = vec2(800.0, 600.0);
       vec3 px(vec2 c) { return texture2D(t, (c + 0.5) / S).rgb; }
@@ -218,40 +262,79 @@
         }
         gl_FragColor = vec4(o, 1.0);
       }`;
-    const prog = gl.createProgram();
-    for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
-      const sh = gl.createShader(type);
-      gl.shaderSource(sh, src);
-      gl.compileShader(sh);
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { console.warn(gl.getShaderInfoLog(sh)); gl = null; return false; }
-      gl.attachShader(prog, sh);
+    const sharp = `precision highp float;
+      uniform sampler2D t; uniform vec2 S; uniform vec2 P; varying vec2 uv;
+      void main() {
+        vec2 texel = uv * S, c = fract(texel) - 0.5, r = 0.5 - 0.5 / P;
+        vec2 f = (c - clamp(c, -r, r)) * P + 0.5;
+        gl_FragColor = vec4(texture2D(t, (floor(texel) + f) / S).rgb, 1.0);
+      }`;
+    function program(fs) {
+      const prog = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, src);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+        gl.attachShader(prog, sh);
+      }
+      gl.linkProgram(prog);
+      const loc = gl.getAttribLocation(prog, 'p');
+      return { prog, loc, u: n => gl.getUniformLocation(prog, n) };
     }
-    gl.linkProgram(prog);
-    gl.useProgram(prog);
+    function texture(w, h) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+      for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+      if (w) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      return tex;
+    }
+    try {
+      glr = { epx: program(epx), sharp: program(sharp), src: texture(), big: texture(1600, 1200) };
+    } catch (e) { console.warn('renderer', e); gl = null; return false; }
+    glr.fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, glr.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, glr.big, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'p');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
-    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
-    gl.viewport(0, 0, 1600, 1200);
     requestAnimationFrame(drawFilter);
     return true;
   }
-  function filterActive() { return filter === 'smooth' && factor > 1.01; }
+  function pass(p, tex, flip) {
+    gl.useProgram(p.prog);
+    gl.enableVertexAttribArray(p.loc);
+    gl.vertexAttribPointer(p.loc, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform1f(p.u('flip'), flip);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(p.u('t'), 0);
+  }
   function drawFilter() {
     requestAnimationFrame(drawFilter);
-    if (!filterActive()) return;
-    const src = document.getElementById('canvas');
+    const src = document.getElementById('canvas'), out = document.getElementById('screen');
     if (src.width !== 800 || src.height !== 600) return;
+    gl.bindTexture(gl.TEXTURE_2D, glr.src);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src);
+    let tex = glr.src, sw = 800, sh = 600;
+    if (filter === 'smooth') {               // 1. Scale2x into the 1600x1200 texture
+      gl.bindFramebuffer(gl.FRAMEBUFFER, glr.fbo);
+      gl.viewport(0, 0, 1600, 1200);
+      pass(glr.epx, glr.src, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      tex = glr.big; sw = 1600; sh = 1200;
+    }
+    gl.viewport(0, 0, out.width, out.height);   // 2. sharp bilinear to the screen pixels
+    pass(glr.sharp, tex, 1);
+    gl.uniform2f(glr.sharp.u('S'), sw, sh);
+    gl.uniform2f(glr.sharp.u('P'), Math.max(1, Math.floor(out.width / sw)), Math.max(1, Math.floor(out.height / sh)));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
   function applyFilter() {
-    if (filter === 'smooth' && !gl && !initFilter()) filter = 'pixel';
-    document.body.classList.toggle('smooth', filterActive());
+    if (!gl) initFilter();
+    document.body.classList.toggle('gl', !!gl);
     document.getElementById('filterbtn').textContent = filter === 'smooth' ? 'Geglättet' : 'Pixelgenau';
   }
   function toggleFilter() {
@@ -264,7 +347,7 @@
     store.set('scale', scale);
     applyScale();
   }
-  window.addEventListener('resize', () => { if (scale === 'fit') applyScale(); });
+  window.addEventListener('resize', () => { if (document.body.classList.contains('running')) applyScale(); });
 
   // --- music: Boxedwine has no MIDI output in the browser, so the page plays kaiser.mid itself
   function updateMusicButton() { document.getElementById('musicbtn').textContent = 'Musik: ' + (musicOn ? 'an' : 'aus'); }
@@ -288,11 +371,87 @@
 
   // --- start: configure the Boxedwine shell, then load the emulator
   ALLOW_PARAM_OVERRIDE_FROM_URL = false;
+  // the shell's file loader gives up silently on a network hiccup; retry, then say so
+  loadFile = async function (prefix, filename, callback) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const r = await fetch(prefix + filename);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        callback(new Uint8Array(await r.arrayBuffer()));
+        return;
+      } catch (e) {
+        if (attempt >= 4) {
+          document.getElementById('status').textContent =
+            'Laden fehlgeschlagen (' + filename + '). Bitte die Seite neu laden.';
+          throw e;
+        }
+        await new Promise(res => setTimeout(res, 1000 * attempt));
+      }
+    }
+  };
   const shellStart = start;
-  start = function () {               // called by the shell once all files are loaded
+  start = async function () {         // called by the shell once all files are loaded
+    // Wine's registry always comes fresh from the image (copies in wine-registry/), so fixes there,
+    // like the fonts, reach returning visitors too. Kaiser keeps its settings in KAISER.INI.
+    for (const f of ['user.reg', 'system.reg']) {
+      try {
+        const r = await fetch('wine-registry/' + f);
+        if (r.ok) FS.writeFile(ROOT + '/home/username/.wine/' + f, new Uint8Array(await r.arrayBuffer()));
+      } catch (e) { console.warn('registry', f, e); }
+    }
     document.body.classList.add('started');
     shellStart();
   };
+
+  // --- savegames: they live in the browser (IndexedDB) in the game's folder; export and import as files
+  const saveDir = () => ROOT + '/home/username/.wine/drive_c/files/' + game.app;
+  function openSaves() {
+    document.getElementById('savedir').textContent = 'C:\\files\\' + game.app;
+    document.getElementById('restartnote').hidden = true;
+    const list = document.getElementById('savelist');
+    list.textContent = '';
+    let names = [];
+    try { names = FS.readdir(saveDir()).filter(n => /\.ksr$/i.test(n)).sort(); } catch (e) {}
+    if (!names.length) list.innerHTML = '<li>Noch keine Spielstände.</li>';
+    for (const n of names) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.textContent = n;
+      a.href = '#';
+      a.title = 'Als Datei herunterladen';
+      a.onclick = e => {
+        e.preventDefault();
+        const blob = new Blob([FS.readFile(saveDir() + '/' + n)], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const dl = document.createElement('a');
+        dl.href = url; dl.download = n; dl.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+      li.appendChild(a);
+      list.appendChild(li);
+    }
+    document.getElementById('saves').showModal();
+  }
+  async function importSaves(files) {
+    if (!files.length) return;
+    try { FS.mkdirTree(saveDir()); } catch (e) {}
+    for (const f of files) {
+      const name = f.name.replace(/[^A-Za-z0-9._-]/g, '_');
+      FS.writeFile(saveDir() + '/' + name, new Uint8Array(await f.arrayBuffer()));
+    }
+    document.getElementById('saveupload').value = '';
+    await new Promise(res => FS.syncfs(false, () => res()));    // stored in the browser now
+    // Boxedwine reads the folder only when it starts, so the game needs a restart to see the files
+    openSaves();
+    document.getElementById('restartnote').hidden = false;
+  }
+  function restartGame() {
+    document.getElementById('saves').close();
+    document.getElementById('status').textContent = 'Kaiser startet neu …';
+    document.body.classList.remove('started');
+    try { sessionStorage.setItem('kaiser.autostart', '1'); } catch (e) {}
+    location.reload();
+  }
   function play() {
     const id = document.querySelector('input[name="game"]:checked').value;
     scale = document.querySelector('input[name="scale"]:checked').value;
@@ -314,6 +473,19 @@
   }
   // bar buttons never keep the keyboard focus, so Enter and Space reach the game
   document.querySelectorAll('#bar button').forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
+  // restart after importing a savegame: start right away; audio resumes with the first click or key
+  let autostart = false;
+  try { autostart = sessionStorage.getItem('kaiser.autostart') === '1'; sessionStorage.removeItem('kaiser.autostart'); } catch (e) {}
+  if (autostart) {
+    let resumed = false;
+    const resume = () => {
+      if (resumed || !synth?.actx || synth.actx.state === 'running') return;
+      resumed = true;
+      synth.actx.resume();
+    };
+    for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, resume, { once: true, capture: true });
+    play();
+  }
 </script>
 <script src="webaudio-tinysynth.js"></script>
 </body>

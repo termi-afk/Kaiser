@@ -99,7 +99,8 @@ def patch_wine_image(data):
     forbids gray-level smoothing at 9-17 pixels, exactly the size of the game's text, so Wine draws
     it unsmoothed and ragged. Arimo (same design, metric-compatible with Arial) allows smoothing at
     every size. It takes the place of the Liberation Sans files, which fontconfig lists, and becomes
-    the family behind "Arial" through HKCU\\Software\\Wine\\Fonts\\Replacements."""
+    the family behind "Arial" through HKCU\\Software\\Wine\\Fonts\\Replacements. A higher smoothing
+    gamma makes the text darker."""
     lib = "usr/local/share/fonts/liberation/LiberationSans-%s.ttf"
     swap = {lib % s: get("arimo-" + s) for s in ["Regular", "Bold", "Italic", "BoldItalic"]}
     anchor = r"[Software\\Wine\\Fonts\\External Fonts]"
@@ -116,7 +117,11 @@ def patch_wine_image(data):
             elif info.filename == "home/username/.wine/user.reg":
                 reg = content.decode("utf-8")
                 assert anchor in reg, "user.reg: font section not found"
-                content = reg.replace(anchor, block + anchor, 1).encode("utf-8")
+                reg = reg.replace(anchor, block + anchor, 1)
+                # darker, better readable smoothed text (Wine's default gamma draws it thin and gray)
+                gamma = '"FontSmoothingGamma"=dword:00000000'
+                assert gamma in reg, "user.reg: FontSmoothingGamma not found"
+                content = reg.replace(gamma, '"FontSmoothingGamma"=dword:00000898', 1).encode("utf-8")
                 done += 1
             zout.writestr(info, content)
     assert done == 5, "Wine image: Liberation Sans files or user.reg not found"
@@ -134,7 +139,7 @@ def main():
         os.makedirs(d, exist_ok=True)
         for n in os.listdir(d):
             p = os.path.join(d, n)
-            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+            shutil.rmtree(p, ignore_errors=True) if os.path.isdir(p) else os.remove(p)
 
     # --- Boxedwine (single-threaded build: GitHub Pages cannot send the COOP/COEP headers the
     #     multi-threaded one needs, and its audio does not work from a worker thread anyway)
@@ -147,6 +152,12 @@ def main():
                 data = data.replace(old, b"var _emscripten_set_window_title = (title) => {};")
             if f == "boxedwine.zip":
                 data = patch_wine_image(data)
+                # the page writes these over the visitor's stored registry at every start
+                os.makedirs(os.path.join(SITE, "wine-registry"), exist_ok=True)
+                with zipfile.ZipFile(io.BytesIO(data)) as img:
+                    for reg in ["user.reg", "system.reg"]:
+                        with open(os.path.join(SITE, "wine-registry", reg), "wb") as out:
+                            out.write(img.read("home/username/.wine/" + reg))
             with open(os.path.join(SITE, f), "wb") as out:
                 out.write(data)
         boxedwine_readme = z.read("readme.txt")

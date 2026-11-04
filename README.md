@@ -27,6 +27,11 @@ Damit die Schrift glatt aussieht, ersetzt die Seite Wines Standardschrift Libera
 [Arimo](https://github.com/googlefonts/Arimo) (OFL, gleiche Laufweiten wie Arial). Liberation Sans erlaubt in der
 Textgröße des Spiels keine Kantenglättung. Für 2× und *Fenster füllen* gibt es zusätzlich einen
 Pixel-Art-Filter (Scale2x, *Darstellung: Geglättet*), der Treppenstufen an Schrift und Kanten rundet.
+Das Bild wird auf die echten Bildschirmpixel gerechnet (auch bei 125 % oder 150 % Windows-Skalierung), damit kein
+Pixel doppelt so breit wird wie sein Nachbar.
+
+Spielstände (*Datei → Speichern*) bleiben im Browser. Über **Spielstände** in der Leiste lassen sie sich als
+`.ksr`-Datei herunterladen und wieder einlesen, auch zum Austausch mit dem Windows-Kaiser.
 
 ## Installieren
 
