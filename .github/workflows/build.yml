@@ -69,6 +69,7 @@ jobs:
         with:
           path: .cache
           key: web-sources-${{ hashFiles('tools/build_web.py') }}
+          restore-keys: web-sources-
 
       - name: Build web version
         run: |
