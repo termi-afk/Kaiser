@@ -55,8 +55,12 @@
   #bar button { background: transparent; color: var(--bar-fg); border: 1px solid #6b604c; border-radius: 4px; padding: 2px 10px; font-size: 14px; }
   #bar button:disabled { opacity: .5; cursor: default; }
   #stage { flex: 1; overflow: auto; display: flex; background: #000; min-height: 0; }
-  #dropzone { margin: auto; line-height: 0; }
+  #dropzone { margin: auto; line-height: 0; position: relative; }
   canvas#canvas { display: block; image-rendering: pixelated; }
+  /* the filtered picture lies over the emulator's canvas; the mouse still goes to the canvas below */
+  canvas#screen { position: absolute; left: 0; top: 0; pointer-events: none; display: none; }
+  body.smooth canvas#screen { display: block; }
+  body.smooth canvas#canvas { opacity: 0; }
   #loading { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center;
     background: var(--bg); color: var(--fg); text-align: center; padding: 16px; }
   body.started #loading { display: none; }
@@ -92,6 +96,16 @@
     </div>
   </fieldset>
 
+  <fieldset>
+    <legend>Darstellung</legend>
+    <div class="choices">
+      <label class="choice"><input type="radio" name="filter" value="smooth" checked>
+        <b>Geglättet</b><span>Pixel-Art-Filter (Scale2x) für 2× und „Fenster füllen“: rundere Schrift und Kanten</span></label>
+      <label class="choice"><input type="radio" name="filter" value="pixel">
+        <b>Pixelgenau</b><span>Jeder Pixel wird nur vergrößert</span></label>
+    </div>
+  </fieldset>
+
   <button id="play" onclick="play()">Spielen</button>
 
   <div class="notes">
@@ -112,10 +126,11 @@
     <span class="title" id="gametitle">Kaiser</span>
     <button id="musicbtn" onclick="toggleMusic()" disabled>Musik: an</button>
     <button id="scalebtn" onclick="cycleScale()">Größe: 1×</button>
-    <button onclick="Module.requestFullscreen(false, false)">Vollbild</button>
+    <button id="filterbtn" onclick="toggleFilter()">Geglättet</button>
+    <button onclick="fullscreen()">Vollbild</button>
     <button onclick="location.reload()" title="Zurück zur Auswahl">Beenden</button>
   </div>
-  <div id="stage"><div id="dropzone"><canvas id="canvas" width="800" height="600" oncontextmenu="event.preventDefault()"></canvas></div></div>
+  <div id="stage"><div id="dropzone"><canvas id="canvas" width="800" height="600" oncontextmenu="event.preventDefault()"></canvas><canvas id="screen" width="1600" height="1200"></canvas></div></div>
   <div id="loading">
     <div id="status">Lade …</div>
     <progress value="0" max="100" id="progress"></progress>
@@ -146,23 +161,103 @@
     get(k, d) { try { return localStorage.getItem('kaiser.' + k) ?? d; } catch (e) { return d; } },
     set(k, v) { try { localStorage.setItem('kaiser.' + k, v); } catch (e) {} },
   };
+  let filter = store.get('filter', 'smooth');
   let game = null, scale = store.get('scale', '1'), musicOn = store.get('music', 'on') !== 'off', synth = null;
 
   // restore the last choices
-  for (const [name, value] of [['game', store.get('game', '122')], ['scale', scale]]) {
+  for (const [name, value] of [['game', store.get('game', '122')], ['scale', scale], ['filter', filter]]) {
     const el = document.querySelector(`input[name="${name}"][value="${value}"]`);
     if (el) el.checked = true;
   }
 
   // --- canvas size: 800x600 times the chosen factor, "fit" = as large as the window allows
+  let factor = 1;
   function applyScale() {
-    const c = document.getElementById('canvas');
     const stage = document.getElementById('stage');
-    let s = Number(scale);
-    if (scale === 'fit') s = Math.max(0.5, Math.min(stage.clientWidth / 800, stage.clientHeight / 600));
-    c.style.width = Math.round(800 * s) + 'px';
-    c.style.height = Math.round(600 * s) + 'px';
+    const mode = document.fullscreenElement ? 'fit' : scale;
+    factor = Number(mode);
+    if (mode === 'fit') factor = Math.max(0.5, Math.min(stage.clientWidth / 800, stage.clientHeight / 600));
+    for (const id of ['canvas', 'screen']) {
+      const c = document.getElementById(id);
+      c.style.width = Math.round(800 * factor) + 'px';
+      c.style.height = Math.round(600 * factor) + 'px';
+    }
     document.getElementById('scalebtn').textContent = 'Größe: ' + SCALE_LABEL[scale];
+    applyFilter();
+  }
+  function fullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.getElementById('stage').requestFullscreen?.();
+  }
+  document.addEventListener('fullscreenchange', () => setTimeout(applyScale, 50));
+
+  // --- picture filter: Scale2x (EPX) on the GPU. Each 800x600 frame of the emulator canvas becomes
+  //     1600x1200 with the stair steps of letters and diagonals filled in, without blurring.
+  //     Wine draws text without anti-aliasing in Boxedwine, so this is what makes the text rounder.
+  let gl = null;
+  function initFilter() {
+    gl = document.getElementById('screen').getContext('webgl', { alpha: false, antialias: false });
+    if (!gl) return false;
+    const vs = 'attribute vec2 p; varying vec2 uv; void main() { uv = vec2(p.x, -p.y) * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }';
+    const fs = `precision mediump float;
+      uniform sampler2D t; varying vec2 uv;
+      const vec2 S = vec2(800.0, 600.0);
+      vec3 px(vec2 c) { return texture2D(t, (c + 0.5) / S).rgb; }
+      bool eq(vec3 a, vec3 b) { return all(lessThan(abs(a - b), vec3(0.004))); }
+      void main() {
+        vec2 c = floor(uv * S), f = fract(uv * S);
+        vec3 E = px(c), B = px(c + vec2(0.0, -1.0)), H = px(c + vec2(0.0, 1.0));
+        vec3 D = px(c + vec2(-1.0, 0.0)), F = px(c + vec2(1.0, 0.0));
+        vec3 o = E;
+        if (!eq(B, H) && !eq(D, F)) {
+          bool l = f.x < 0.5, u = f.y < 0.5;
+          if (u && l && eq(D, B)) o = D;
+          else if (u && !l && eq(B, F)) o = F;
+          else if (!u && l && eq(D, H)) o = D;
+          else if (!u && !l && eq(H, F)) o = F;
+        }
+        gl_FragColor = vec4(o, 1.0);
+      }`;
+    const prog = gl.createProgram();
+    for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { console.warn(gl.getShaderInfoLog(sh)); gl = null; return false; }
+      gl.attachShader(prog, sh);
+    }
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.NEAREST);
+    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+    gl.viewport(0, 0, 1600, 1200);
+    requestAnimationFrame(drawFilter);
+    return true;
+  }
+  function filterActive() { return filter === 'smooth' && factor > 1.01; }
+  function drawFilter() {
+    requestAnimationFrame(drawFilter);
+    if (!filterActive()) return;
+    const src = document.getElementById('canvas');
+    if (src.width !== 800 || src.height !== 600) return;
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  function applyFilter() {
+    if (filter === 'smooth' && !gl && !initFilter()) filter = 'pixel';
+    document.body.classList.toggle('smooth', filterActive());
+    document.getElementById('filterbtn').textContent = filter === 'smooth' ? 'Geglättet' : 'Pixelgenau';
+  }
+  function toggleFilter() {
+    filter = filter === 'smooth' ? 'pixel' : 'smooth';
+    store.set('filter', filter);
+    applyFilter();
   }
   function cycleScale() {
     scale = SCALES[(SCALES.indexOf(scale) + 1) % SCALES.length];
@@ -201,8 +296,10 @@
   function play() {
     const id = document.querySelector('input[name="game"]:checked').value;
     scale = document.querySelector('input[name="scale"]:checked').value;
+    filter = document.querySelector('input[name="filter"]:checked').value;
     store.set('game', id);
     store.set('scale', scale);
+    store.set('filter', filter);
     game = GAMES[id];
     document.title = game.title + ' – Kaiser im Browser';
     document.getElementById('gametitle').textContent = game.title;

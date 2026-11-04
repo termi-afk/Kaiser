@@ -23,6 +23,11 @@ also Wine als WebAssembly. Soundeffekte kommen über Wine. Die MIDI-Musik spielt
 MIDI-Ausgabe. Die Hilfe (Menü *Hilfe* und „?“-Knöpfe) öffnet sich im Spiel in WinHelp. Einstellungen und
 Spielstände speichert der Browser lokal (IndexedDB). Beim ersten Start lädt die Seite rund 40 MB.
 
+Damit die Schrift glatt aussieht, ersetzt die Seite Wines Standardschrift Liberation Sans durch
+[Arimo](https://github.com/googlefonts/Arimo) (OFL, gleiche Laufweiten wie Arial). Liberation Sans erlaubt in der
+Textgröße des Spiels keine Kantenglättung. Für 2× und *Fenster füllen* gibt es zusätzlich einen
+Pixel-Art-Filter (Scale2x, *Darstellung: Geglättet*), der Treppenstufen an Schrift und Kanten rundet.
+
 ## Installieren
 
 1. Die neueste `Kaiser-*-Setup.msi` unter [Releases](../../releases) herunterladen.

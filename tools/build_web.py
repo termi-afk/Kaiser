@@ -40,6 +40,15 @@ SOURCES = {
     "tinysynth": ("https://registry.npmjs.org/webaudio-tinysynth/-/webaudio-tinysynth-1.1.3.tgz",
                   "webaudio-tinysynth-1.1.3.tgz", "e9f154131b55cadda7a5919ef8a88f2a53be189448d45e7de897dd4992095e47"),
 }
+# Arimo (SIL OFL 1.1): metric-compatible with Arial and smoothed at every size, see patch_wine_image
+ARIMO = "https://raw.githubusercontent.com/googlefonts/Arimo/4a6255f269916ae7ad3fc2706b0935e7621396b8/"
+for _style, _digest in [("Regular", "41b22bc8f0b51f932825d37bc55b5eb6ba67dfe599a626e4aff2b43b624f9f8c"),
+                        ("Bold", "d7a8b187cf8444d4cfee102e8eae9e3043682fd5106d5d33ed677fe268a0e2ba"),
+                        ("Italic", "ffdf690e4357a392e4edcc3df0b3adb0302920f75e54f2e6eec355afbe7edcba"),
+                        ("BoldItalic", "77c967d49d4ef4a63c39fbcd1e27892102e503e35a20983cb058430c4f268b34")]:
+    SOURCES["arimo-" + _style] = (ARIMO + "fonts/ttf/Arimo-%s.ttf" % _style, "Arimo-%s.ttf" % _style, _digest)
+SOURCES["arimo-license"] = (ARIMO + "OFL.txt", "Arimo-OFL.txt",
+                            "c46fda6859efb80c0a3c1faa868908a3d2fcb26eb7fd9602d73bebeec21bca3a")
 
 WINHELP = ["opt/wine/lib/wine/winhlp32.exe.so", "opt/wine/lib/wine/winhelp.exe16.so",
            "opt/wine/lib/wine/fakedlls/winhlp32.exe", "opt/wine/lib/wine/fakedlls/winhelp.exe16"]
@@ -85,6 +94,35 @@ def member(z, name):
     raise KeyError(name)
 
 
+def patch_wine_image(data):
+    """Kaiser's text comes out in Wine's default sans-serif family, Liberation Sans. Its gasp table
+    forbids gray-level smoothing at 9-17 pixels, exactly the size of the game's text, so Wine draws
+    it unsmoothed and ragged. Arimo (same design, metric-compatible with Arial) allows smoothing at
+    every size. It takes the place of the Liberation Sans files, which fontconfig lists, and becomes
+    the family behind "Arial" through HKCU\\Software\\Wine\\Fonts\\Replacements."""
+    lib = "usr/local/share/fonts/liberation/LiberationSans-%s.ttf"
+    swap = {lib % s: get("arimo-" + s) for s in ["Regular", "Bold", "Italic", "BoldItalic"]}
+    anchor = r"[Software\\Wine\\Fonts\\External Fonts]"
+    block = (r"[Software\\Wine\\Fonts\\Replacements] 1730925763" + "\n"
+             '"Arial"="Arimo"\n"Liberation Sans"="Arimo"\n"Helvetica"="Arimo"\n\n')
+    out = io.BytesIO()
+    done = 0
+    with zipfile.ZipFile(io.BytesIO(data)) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            content = zin.read(info)
+            if info.filename in swap:
+                content = open(swap[info.filename], "rb").read()
+                done += 1
+            elif info.filename == "home/username/.wine/user.reg":
+                reg = content.decode("utf-8")
+                assert anchor in reg, "user.reg: font section not found"
+                content = reg.replace(anchor, block + anchor, 1).encode("utf-8")
+                done += 1
+            zout.writestr(info, content)
+    assert done == 5, "Wine image: Liberation Sans files or user.reg not found"
+    return out.getvalue()
+
+
 def write_zip(path, entries):
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for arc, data in entries:
@@ -92,10 +130,11 @@ def write_zip(path, entries):
 
 
 def main():
-    shutil.rmtree(SITE, ignore_errors=True)
-    shutil.rmtree(BUILD, ignore_errors=True)
-    os.makedirs(SITE)
-    os.makedirs(BUILD)
+    for d in (SITE, BUILD):       # empty rather than remove: the folder may be some shell's cwd
+        os.makedirs(d, exist_ok=True)
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
 
     # --- Boxedwine (single-threaded build: GitHub Pages cannot send the COOP/COEP headers the
     #     multi-threaded one needs, and its audio does not work from a worker thread anyway)
@@ -106,6 +145,8 @@ def main():
                 old = b"var _emscripten_set_window_title = (title) => document.title = UTF8ToString(title);"
                 assert old in data, "boxedwine.js: window title hook not found"
                 data = data.replace(old, b"var _emscripten_set_window_title = (title) => {};")
+            if f == "boxedwine.zip":
+                data = patch_wine_image(data)
             with open(os.path.join(SITE, f), "wb") as out:
                 out.write(data)
         boxedwine_readme = z.read("readme.txt")
@@ -166,6 +207,7 @@ def main():
     for f in os.listdir(os.path.join(ROOT, "web")):
         shutil.copy(os.path.join(ROOT, "web", f), SITE)
     open(os.path.join(SITE, ".nojekyll"), "w").close()
+    shutil.copy(get("arimo-license"), os.path.join(SITE, "LICENSE-Arimo-OFL.txt"))
     with open(os.path.join(SITE, "THIRD-PARTY.txt"), "w", encoding="utf-8", newline="\n") as f:
         f.write(THIRD_PARTY + "\n--- Boxedwine readme.txt ---\n" + boxedwine_readme.decode("utf-8", "replace"))
 
@@ -183,6 +225,8 @@ Boxedwine 26R1 (GPL-2.0) - https://github.com/danoon2/Boxedwine (source: tag 26R
   boxedwine.js, boxedwine.wasm, boxedwine-shell.js, and the file system boxedwine.zip
 Wine 6.0 (LGPL-2.1) - https://www.winehq.org, as built for Boxedwine
   boxedwine.zip, winhelp.zip (winhlp32 from https://boxedwine.org/v2/2/TinyCore15Wine6.0.zip)
+Arimo (SIL OFL 1.1) - https://github.com/googlefonts/Arimo, unmodified; inside boxedwine.zip in place
+  of Liberation Sans (usr/local/share/fonts/liberation/LiberationSans-*.ttf), see LICENSE-Arimo-OFL.txt
 WebAudio-TinySynth 1.1.3 (Apache-2.0) - https://github.com/g200kg/webaudio-tinysynth
   webaudio-tinysynth.js, see LICENSE-webaudio-tinysynth.txt
 """
