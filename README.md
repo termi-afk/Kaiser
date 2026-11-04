@@ -12,6 +12,17 @@ Kaiser ist ein 16-Bit-Programm für Windows 3.1, das ein 64-Bit-Windows nicht me
 Der Installer bringt deshalb [otvdm/winevdm](https://github.com/otya128/winevdm) mit: Die Spiele laufen
 damit direkt unter Windows 11, in voller Farbtiefe und mit Musik und Soundeffekten, ganz ohne Emulator.
 
+## Im Browser spielen
+
+**[termi-afk.github.io/Kaiser](https://termi-afk.github.io/Kaiser/)**: Kaiser 1.22a oder 1.23 auswählen,
+die Größe festlegen (1× = 800×600, 2× = 1600×1200 oder fensterfüllend) und *Spielen*.
+
+Im Browser läuft das originale 16-Bit-Programm, unverändert, in [Boxedwine](https://github.com/danoon2/Boxedwine),
+also Wine als WebAssembly. Soundeffekte kommen über Wine. Die MIDI-Musik spielt die Seite selbst mit
+[WebAudio-TinySynth](https://github.com/g200kg/webaudio-tinysynth), denn Boxedwine hat im Browser keine
+MIDI-Ausgabe. Die Hilfe (Menü *Hilfe* und „?“-Knöpfe) öffnet sich im Spiel in WinHelp. Einstellungen und
+Spielstände speichert der Browser lokal (IndexedDB). Beim ersten Start lädt die Seite rund 40 MB.
+
 ## Installieren
 
 1. Die neueste `Kaiser-*-Setup.msi` unter [Releases](../../releases) herunterladen.
@@ -50,6 +61,15 @@ Skript bei Bedarf selbst installiert).
 ```
 
 GitHub Actions baut bei jedem Push. Ein Tag `v*` erstellt ein Release mit dem MSI.
+
+Die Browser-Version baut `tools/build_web.py` nach `build/site` (Python 3 mit Pillow, auf jedem System).
+Es lädt dazu zusätzlich den Web-Build von Boxedwine 26R1, dessen vollständiges Wine-6.0-Dateisystem (daraus
+nur WinHelp) und WebAudio-TinySynth, ebenfalls mit festen Prüfsummen. Die Seiten liegen in `web/`. Bei jedem
+Push auf `main` veröffentlicht GitHub Actions das Ergebnis auf GitHub Pages.
+
+```bash
+python tools/build_web.py
+```
 
 ### Wie die 1.23-Hilfe entsteht
 

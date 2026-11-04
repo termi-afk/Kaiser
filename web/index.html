@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kaiser im Browser</title>
+<meta name="description" content="Das Strategiespiel Kaiser von Stefan Maday (Windows 3.1) im Browser, mit Boxedwine.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&display=swap">
+<style>
+  :root {
+    --bg: #f4efe1; --fg: #2b2418; --muted: #6b604c; --panel: #fffaf0; --line: #d8ccb0;
+    --accent: #8a1c1c; --accent-fg: #fff; --sel: #f3e3b5; --bar: #2b2418; --bar-fg: #f4efe1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1813; --fg: #ece4d2; --muted: #a59a83; --panel: #262119; --line: #4a4132;
+      --accent: #d9b44a; --accent-fg: #1b1813; --sel: #3b3222; --bar: #0f0d0a; --bar-fg: #ece4d2;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1813; --fg: #ece4d2; --muted: #a59a83; --panel: #262119; --line: #4a4132;
+    --accent: #d9b44a; --accent-fg: #1b1813; --sel: #3b3222; --bar: #0f0d0a; --bar-fg: #ece4d2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  button { font: inherit; cursor: pointer; }
+
+  /* --- start screen */
+  #menu { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  #menu h1 { font-family: "UnifrakturMaguntia", "Old English Text MT", Georgia, serif; font-size: 56px; line-height: 1; margin: 0 0 4px; }
+  #menu .lead { color: var(--muted); margin: 0 0 28px; }
+  fieldset { border: 0; padding: 0; margin: 0 0 24px; }
+  legend { font-weight: 600; margin-bottom: 8px; padding: 0; }
+  .choices { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .choice { display: block; position: relative; border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px 12px 40px;
+    background: var(--panel); cursor: pointer; }
+  .choice:has(input:checked) { border-color: var(--accent); background: var(--sel); }
+  .choice input { position: absolute; left: 14px; top: 16px; accent-color: var(--accent); }
+  .choice b { display: block; }
+  .choice span { color: var(--muted); font-size: 14px; }
+  .choice.disabled { opacity: .5; cursor: not-allowed; }
+  #play { background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 8px; padding: 12px 36px; font-size: 20px; font-weight: 600; }
+  .notes { color: var(--muted); font-size: 14px; margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .notes ul { padding-left: 20px; margin: 8px 0; }
+
+  /* --- game */
+  #game { display: none; height: 100%; flex-direction: column; }
+  body.running #menu { display: none; }
+  body.running #game { display: flex; }
+  #bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: var(--bar); color: var(--bar-fg); flex-wrap: wrap; }
+  #bar .title { font-weight: 600; margin-right: auto; }
+  #bar button { background: transparent; color: var(--bar-fg); border: 1px solid #6b604c; border-radius: 4px; padding: 2px 10px; font-size: 14px; }
+  #bar button:disabled { opacity: .5; cursor: default; }
+  #stage { flex: 1; overflow: auto; display: flex; background: #000; min-height: 0; }
+  #dropzone { margin: auto; line-height: 0; }
+  canvas#canvas { display: block; image-rendering: pixelated; }
+  #loading { position: fixed; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--fg); text-align: center; padding: 16px; }
+  body.started #loading { display: none; }
+  progress { width: min(320px, 80vw); accent-color: var(--accent); }
+  #output, #spinner, .hidden { display: none; }
+</style>
+</head>
+<body>
+<div id="menu">
+  <h1>Kaiser</h1>
+  <p class="lead">Das Strategiespiel von Stefan Maday für Windows 3.1, im Browser: das originale Programm, unverändert,
+     mit Musik und Soundeffekten in 800×600.</p>
+
+  <fieldset>
+    <legend>Version</legend>
+    <div class="choices">
+      <label class="choice"><input type="radio" name="game" value="122" checked>
+        <b>Kaiser 1.22a</b><span>Letzte offizielle Version (2004), mit der originalen Hilfe</span></label>
+      <label class="choice"><input type="radio" name="game" value="123">
+        <b>Kaiser 1.23 beta</b><span>Neuere Version mit Wirtshaus u.&nbsp;a. (<a href="handbuch-1.23/" target="_blank">Handbuch</a>)</span></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Größe</legend>
+    <div class="choices">
+      <label class="choice"><input type="radio" name="scale" value="1" checked>
+        <b>1×</b><span>800×600 Pixel</span></label>
+      <label class="choice" id="choice2x"><input type="radio" name="scale" value="2">
+        <b>2×</b><span>Doppelte Größe, 1600×1200 Pixel</span></label>
+      <label class="choice"><input type="radio" name="scale" value="fit">
+        <b>Fenster füllen</b><span>So groß, wie das Fenster erlaubt</span></label>
+    </div>
+  </fieldset>
+
+  <button id="play" onclick="play()">Spielen</button>
+
+  <div class="notes">
+    <ul>
+      <li>Beim ersten Start lädt der Browser rund 40&nbsp;MB, danach geht es schneller.</li>
+      <li>Einstellungen und Spielstände bleiben in diesem Browser gespeichert (lokal, nicht auf einem Server).</li>
+      <li>Die Musik spielt ein Synthesizer im Browser, sie klingt daher anders als unter Windows.</li>
+      <li>Für Windows 10/11 gibt es auch einen <a href="https://github.com/termi-afk/Kaiser/releases/latest">Installer</a>.</li>
+    </ul>
+    Läuft mit <a href="https://github.com/danoon2/Boxedwine">Boxedwine</a> (Wine als WebAssembly).
+    Kaiser © Stefan Maday, Freeware. <a href="https://github.com/termi-afk/Kaiser">Quelltext und Hinweise</a> ·
+    <a href="THIRD-PARTY.txt">Komponenten und Lizenzen</a>
+  </div>
+</div>
+
+<div id="game">
+  <div id="bar">
+    <span class="title" id="gametitle">Kaiser</span>
+    <button id="musicbtn" onclick="toggleMusic()" disabled>Musik: an</button>
+    <button id="scalebtn" onclick="cycleScale()">Größe: 1×</button>
+    <button onclick="Module.requestFullscreen(false, false)">Vollbild</button>
+    <button onclick="location.reload()" title="Zurück zur Auswahl">Beenden</button>
+  </div>
+  <div id="stage"><div id="dropzone"><canvas id="canvas" width="800" height="600" oncontextmenu="event.preventDefault()"></canvas></div></div>
+  <div id="loading">
+    <div id="status">Lade …</div>
+    <progress value="0" max="100" id="progress"></progress>
+    <figure id="spinner"></figure>
+  </div>
+</div>
+
+<!-- elements the Boxedwine shell expects -->
+<div class="hidden">
+  <button id="startbtn"></button><button id="uploadbtn"></button><input id="upload" type="file"><button id="downloadbtn"></button>
+  <a id="modalLink"></a><a id="modalLinkExe"></a>
+  <span id="sound-checkbox"><input type="checkbox" id="soundToggle" checked></span>
+  <input type="checkbox" id="showConsole"><input type="checkbox" id="pointerLock"><input type="checkbox" id="resize">
+  <div id="openModal"><input id="selectedItem"><div id="tree"></div><h3 id="loadStatus"></h3></div>
+  <div id="openModalExe"><a id="openModalExeClick"></a><div id="message"></div><div id="items"></div></div>
+</div>
+<textarea id="output"></textarea>
+
+<script src="boxedwine-shell.js"></script>
+<script>
+  const GAMES = {
+    '122': { title: 'Kaiser 1.22a', app: 'kaiser122', overlay: 'kaiser122-ini;winhelp' },
+    '123': { title: 'Kaiser 1.23 beta', app: 'kaiser123', overlay: 'winhelp' },
+  };
+  const SCALES = ['1', '2', 'fit'];
+  const SCALE_LABEL = { '1': '1×', '2': '2×', 'fit': 'Fenster' };
+  const store = {
+    get(k, d) { try { return localStorage.getItem('kaiser.' + k) ?? d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('kaiser.' + k, v); } catch (e) {} },
+  };
+  let game = null, scale = store.get('scale', '1'), musicOn = store.get('music', 'on') !== 'off', synth = null;
+
+  // restore the last choices
+  for (const [name, value] of [['game', store.get('game', '122')], ['scale', scale]]) {
+    const el = document.querySelector(`input[name="${name}"][value="${value}"]`);
+    if (el) el.checked = true;
+  }
+
+  // --- canvas size: 800x600 times the chosen factor, "fit" = as large as the window allows
+  function applyScale() {
+    const c = document.getElementById('canvas');
+    const stage = document.getElementById('stage');
+    let s = Number(scale);
+    if (scale === 'fit') s = Math.max(0.5, Math.min(stage.clientWidth / 800, stage.clientHeight / 600));
+    c.style.width = Math.round(800 * s) + 'px';
+    c.style.height = Math.round(600 * s) + 'px';
+    document.getElementById('scalebtn').textContent = 'Größe: ' + SCALE_LABEL[scale];
+  }
+  function cycleScale() {
+    scale = SCALES[(SCALES.indexOf(scale) + 1) % SCALES.length];
+    store.set('scale', scale);
+    applyScale();
+  }
+  window.addEventListener('resize', () => { if (scale === 'fit') applyScale(); });
+
+  // --- music: Boxedwine has no MIDI output in the browser, so the page plays kaiser.mid itself
+  function updateMusicButton() { document.getElementById('musicbtn').textContent = 'Musik: ' + (musicOn ? 'an' : 'aus'); }
+  function toggleMusic() {
+    musicOn = !musicOn;
+    store.set('music', musicOn ? 'on' : 'off');
+    updateMusicButton();
+    if (synth) { if (musicOn) synth.playMIDI(); else synth.stopMIDI(); }
+  }
+  async function startMusic() {
+    try {
+      synth = new WebAudioTinySynth({ quality: 1, useReverb: 1, voices: 32 });
+      synth.setMasterVol(0.35);
+      synth.setLoop(1);
+      synth.loadMIDI(await (await fetch(game.app + '.mid')).arrayBuffer());
+      document.getElementById('musicbtn').disabled = false;
+      updateMusicButton();
+      if (musicOn) synth.playMIDI();
+    } catch (e) { console.warn('music', e); }
+  }
+
+  // --- start: configure the Boxedwine shell, then load the emulator
+  ALLOW_PARAM_OVERRIDE_FROM_URL = false;
+  const shellStart = start;
+  start = function () {               // called by the shell once all files are loaded
+    document.body.classList.add('started');
+    shellStart();
+  };
+  function play() {
+    const id = document.querySelector('input[name="game"]:checked').value;
+    scale = document.querySelector('input[name="scale"]:checked').value;
+    store.set('game', id);
+    store.set('scale', scale);
+    game = GAMES[id];
+    document.title = game.title + ' – Kaiser im Browser';
+    document.getElementById('gametitle').textContent = game.title;
+    Config.urlParams = 'app=' + game.app + '&p=KAISER.EXE&resolution=800x600&auto=true&sound=true&overlay=' + game.overlay;
+    document.body.classList.add('running');
+    document.activeElement && document.activeElement.blur();   // keys must go to the game, not to a button
+    applyScale();
+    startMusic();                     // inside the click: the browser allows audio from here on
+    const s = document.createElement('script');
+    s.src = 'boxedwine.js';
+    document.body.appendChild(s);
+  }
+  // bar buttons never keep the keyboard focus, so Enter and Space reach the game
+  document.querySelectorAll('#bar button').forEach(b => b.addEventListener('mousedown', e => e.preventDefault()));
+</script>
+<script src="webaudio-tinysynth.js"></script>
+</body>
+</html>
