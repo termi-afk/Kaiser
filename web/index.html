@@ -377,7 +377,26 @@
       try {
         const r = await fetch(prefix + filename);
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        callback(new Uint8Array(await r.arrayBuffer()));
+        // read with progress: boxedwine.zip alone is about 37 MB
+        const total = Number(r.headers.get('content-length')) || 0;
+        const status = document.getElementById('status'), bar = document.getElementById('progress');
+        const reader = r.body.getReader(), parts = [];
+        let got = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parts.push(value);
+          got += value.length;
+          if (total > 2e6) {
+            status.textContent = 'Lade ' + filename + ' … ' + (got / 1e6).toFixed(0) + ' von ' + (total / 1e6).toFixed(0) + ' MB';
+            bar.max = total; bar.value = got; bar.hidden = false;
+          }
+        }
+        const data = new Uint8Array(got);
+        let pos = 0;
+        for (const p of parts) { data.set(p, pos); pos += p.length; }
+        status.textContent = 'Starte Kaiser …';
+        callback(data);
         return;
       } catch (e) {
         if (attempt >= 4) {
