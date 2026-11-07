@@ -25,9 +25,10 @@ tar xf wine-6.0.tar.xz
 cd wine-6.0
 patch -p1 --quiet < "$patch_file"
 
-# WinHelp as an ELF module like the rest of Boxedwine's Wine (no MinGW, so no PE build)
+# WinHelp as an ELF module like the rest of Boxedwine's Wine (no MinGW, so no PE build).
+# gnu17: Wine 6.0 predates C23, in which newer compilers' default "bool" is a keyword.
 ./configure -q --disable-tests --without-x --without-freetype --without-mingw \
-    CFLAGS="-O2 -fno-stack-protector -fcommon" > ../configure.log 2>&1 \
+    CFLAGS="-std=gnu17 -O2 -fno-stack-protector -fcommon" > ../configure.log 2>&1 \
     || { tail -30 ../configure.log; exit 1; }
 make -j"$(nproc)" __tooldeps__ > ../tools.log 2>&1 || { tail -30 ../tools.log; exit 1; }
 make -j"$(nproc)" -C programs/winhlp32 > ../winhlp32.log 2>&1 || { tail -30 ../winhlp32.log; exit 1; }
