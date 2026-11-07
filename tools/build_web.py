@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -128,6 +129,38 @@ def patch_wine_image(data):
     return out.getvalue()
 
 
+def patch_winhlp(data):
+    """The "?" buttons in Kaiser's dialogs ask WinHelp for a popup topic (HELP_CONTEXTPOPUP). Wine
+    6.0 handles that with MACRO_PopupContext, which only logs a FIXME, so nothing appears. This
+    replaces its body with a call to MACRO_JumpContext(file, "main", context), the same thing
+    HELP_CONTEXT (the Hilfe menu) does: the topic opens in the WinHelp window.
+
+    winhlp32.exe.so is i386 code with absolute addresses that the loader relocates. The stub sits
+    between those relocated words and uses only relative addressing (call/pop for the "main"
+    string), so the loader does not touch it."""
+    popup, jump, main_str = 0x238f2, 0x2275c, 0x2c698   # MACRO_PopupContext, MACRO_JumpContext, "main"
+    original = bytes.fromhex("f6053057050001 7503 c20800 5589e5 83e4f0 83ec20 8b4508 e86be6ffff 8b550c")
+    assert data[popup:popup + len(original)] == original, "winhlp32: MACRO_PopupContext not as expected"
+    assert data[main_str - 1:main_str + 5] == b"\0main\0", "winhlp32: \"main\" string not found"
+    at = popup + 6                                  # first byte after the relocated word at +2
+    stub = bytearray()
+    stub += bytes.fromhex("8b442408")               # mov eax, [esp+8]      ; context
+    stub += bytes.fromhex("50")                     # push eax
+    stub += bytes.fromhex("e800000000")             # call $+5
+    here = at + len(stub)
+    stub += bytes.fromhex("59")                     # pop ecx               ; ecx = here
+    stub += bytes.fromhex("8d89") + struct.pack("<i", main_str - here)   # lea ecx, ["main"]
+    stub += bytes.fromhex("51")                     # push ecx              ; window "main"
+    stub += bytes.fromhex("ff74240c")               # push [esp+0Ch]        ; help file
+    stub += bytes.fromhex("e8") + struct.pack("<i", jump - (at + len(stub) + 5))   # call JumpContext
+    stub += bytes.fromhex("c20800")                 # ret 8
+    assert at + len(stub) <= popup + 0x2c, "winhlp32: stub overlaps a relocated word"
+    out = bytearray(data)
+    out[popup:popup + 2] = bytes([0xEB, at - popup - 2])   # jmp short to the stub
+    out[at:at + len(stub)] = stub
+    return bytes(out)
+
+
 def write_zip(path, entries):
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for arc, data in entries:
@@ -165,7 +198,10 @@ def main():
     # --- WinHelp for the in-game help (the "?" buttons and the Hilfe menu)
     with zipfile.ZipFile(get("wine6")) as src, zipfile.ZipFile(os.path.join(SITE, "winhelp.zip"), "w", zipfile.ZIP_DEFLATED) as z:
         for n in WINHELP:
-            z.writestr(src.getinfo(n), src.read(n))
+            data = src.read(n)
+            if n.endswith("winhlp32.exe.so"):
+                data = patch_winhlp(data)
+            z.writestr(src.getinfo(n), data)
 
     # --- the games; each in its own folder C:\files\<name>
     with zipfile.ZipFile(get("k122")) as z:
