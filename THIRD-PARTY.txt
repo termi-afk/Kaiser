@@ -1,0 +1,50 @@
+Kaiser im Browser - third-party components
+
+Kaiser 1.22a and 1.23 beta (c) Stefan Maday, offered as freeware on the author's website.
+  1.22a: Kai122a.zip from yadam.de via the Internet Archive
+  1.23:  kaiser.exe / kaiser.mid / docs/manual.md from github.com/LarsGehrmann/Kaiser-decompile v1.0.2
+
+Boxedwine 26R1 (GPL-2.0) - https://github.com/danoon2/Boxedwine (source: tag 26R1.0)
+  boxedwine.js, boxedwine.wasm, boxedwine-shell.js, and the file system boxedwine.zip
+Wine 6.0 (LGPL-2.1) - https://www.winehq.org, as built for Boxedwine
+  boxedwine.zip, winhelp.zip (from https://boxedwine.org/v2/2/TinyCore15Wine6.0.zip)
+  winhelp.zip: winhlp32.exe.so built from the Wine 6.0 source
+  (https://dl.winehq.org/wine/source/6.0/wine-6.0.tar.xz) with a patch that adds popups for
+  WinHelp(HELP_CONTEXTPOPUP): https://github.com/termi-afk/Kaiser/blob/main/data/wine-6.0-winhlp32-popup.patch
+Arimo (SIL OFL 1.1) - https://github.com/googlefonts/Arimo, unmodified; inside boxedwine.zip in place
+  of Liberation Sans (usr/local/share/fonts/liberation/LiberationSans-*.ttf), see LICENSE-Arimo-OFL.txt
+WebAudio-TinySynth 1.1.3 (Apache-2.0) - https://github.com/g200kg/webaudio-tinysynth
+  webaudio-tinysynth.js, see LICENSE-webaudio-tinysynth.txt
+
+--- Boxedwine readme.txt ---
+Boxedwine 26R1
+April 22, 2026
+
+Project: https://github.com/danoon2/Boxedwine
+
+This is a build for web/javascript using Emscripten.  It also contains a simple web page as an example for launching games.
+
+There are two separated builds, multi-threaded and single threaded.
+
+If you are trying to get a specific app or game to work, you might want to try both.  
+
+In general the multi-threaded version is faster, but it requires that you set these http headers which may not be possible on some servers, like github.
+
+Header add Cross-Origin-Opener-Policy "same-origin"
+Header add Cross-Origin-Embedder-Policy "require-corp"
+
+In each build, it contains a super stripped down version of the Wine 6.0 file system, boxedwine.zip.  But I also included in the Wine11 folder a boxedwine.zip based on Wine 11.
+
+Wine 11 faster, but some apps/games may have some issues.
+
+This stripped down file systems should handle a lot of 32-bit/16-bit apps and games and includes DirectDraw support.  
+
+OpenGL and Direct3D are not supported in the Web/Emscripten build because they can not currently be converted to WebGL.
+
+To see some examples of these builds running see
+
+https://www.boxedwine.org/v/26R1/
+
+Known Issues:
+
+I have seen a few index out of bounds exceptions in audio
