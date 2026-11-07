@@ -20,7 +20,9 @@ die Größe festlegen (1× = 800×600, 2× = 1600×1200 oder fensterfüllend) un
 Im Browser läuft das originale 16-Bit-Programm, unverändert, in [Boxedwine](https://github.com/danoon2/Boxedwine),
 also Wine als WebAssembly. Soundeffekte kommen über Wine. Die MIDI-Musik spielt die Seite selbst mit
 [WebAudio-TinySynth](https://github.com/g200kg/webaudio-tinysynth), denn Boxedwine hat im Browser keine
-MIDI-Ausgabe. Die Hilfe (Menü *Hilfe* und „?“-Knöpfe) öffnet sich im Spiel in WinHelp. Einstellungen und
+MIDI-Ausgabe. Die Hilfe (Menü *Hilfe* und „?“-Knöpfe) öffnet sich im Spiel in WinHelp. Die „?“-Knöpfe zeigen
+ihr Thema als Popup wie unter Windows 3.1. Wines WinHelp kann das nicht, deshalb baut der Build WinHelp aus dem
+Wine-Quellcode mit [einem Patch](data/wine-6.0-winhlp32-popup.patch) neu. Einstellungen und
 Spielstände speichert der Browser lokal (IndexedDB). Beim ersten Start lädt die Seite rund 40 MB.
 
 Damit die Schrift glatt aussieht, ersetzt die Seite Wines Standardschrift Liberation Sans durch
@@ -76,6 +78,10 @@ Die Browser-Version baut `tools/build_web.py` nach `build/site` (Python 3 mit Pi
 Es lädt dazu zusätzlich den Web-Build von Boxedwine 26R1, dessen vollständiges Wine-6.0-Dateisystem (daraus
 nur WinHelp) und WebAudio-TinySynth, ebenfalls mit festen Prüfsummen. Die Seiten liegen in `web/`. Bei jedem
 Push auf `main` veröffentlicht GitHub Actions das Ergebnis auf GitHub Pages.
+
+WinHelp mit Popups baut `tools/build_winhlp32.sh` aus dem Wine-6.0-Quellcode. Dafür braucht es Linux mit
+32-Bit-Compiler (Debian/Ubuntu: `gcc-multilib flex bison`); unter Windows geht das in WSL. Ohne gebautes WinHelp
+öffnen die „?“-Knöpfe ihr Thema im großen WinHelp-Fenster statt als Popup.
 
 ```bash
 python tools/build_web.py

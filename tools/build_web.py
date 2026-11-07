@@ -129,11 +129,29 @@ def patch_wine_image(data):
     return out.getvalue()
 
 
+def winhlp32_with_popups():
+    """The "?" buttons in Kaiser's dialogs ask WinHelp for a popup topic (HELP_CONTEXTPOPUP), which
+    Wine never implemented. tools/build_winhlp32.sh builds Wine 6.0's WinHelp with
+    data/wine-6.0-winhlp32-popup.patch, which adds it. That needs Linux with a 32-bit compiler;
+    elsewhere a winhlp32 built before (in .cache, e.g. via WSL) is used, else None."""
+    h = hashlib.sha256()
+    for f in [os.path.join(DATA, "wine-6.0-winhlp32-popup.patch"), os.path.join(TOOLS, "build_winhlp32.sh")]:
+        h.update(open(f, "rb").read().replace(b"\r\n", b"\n"))
+    path = os.path.join(CACHE, "winhlp32-popup-%s.exe.so" % h.hexdigest()[:12])
+    if not os.path.exists(path) and sys.platform.startswith("linux"):
+        subprocess.run(["sh", os.path.join(TOOLS, "build_winhlp32.sh"), path], check=True)
+    if not os.path.exists(path):
+        print("WARNING: no Linux to build WinHelp with popups; run tools/build_winhlp32.sh",
+              path, "(e.g. in WSL). Falling back to opening '?' topics in the WinHelp window.")
+        return None
+    return open(path, "rb").read()
+
+
 def patch_winhlp(data):
-    """The "?" buttons in Kaiser's dialogs ask WinHelp for a popup topic (HELP_CONTEXTPOPUP). Wine
-    6.0 handles that with MACRO_PopupContext, which only logs a FIXME, so nothing appears. This
-    replaces its body with a call to MACRO_JumpContext(file, "main", context), the same thing
-    HELP_CONTEXT (the Hilfe menu) does: the topic opens in the WinHelp window.
+    """Fallback when WinHelp cannot be built here: Wine 6.0 handles HELP_CONTEXTPOPUP with
+    MACRO_PopupContext, which only logs a FIXME, so nothing appears. This replaces its body in the
+    binary with a call to MACRO_JumpContext(file, "main", context), the same thing HELP_CONTEXT
+    (the Hilfe menu) does: the topic opens in the WinHelp window instead of a popup.
 
     winhlp32.exe.so is i386 code with absolute addresses that the loader relocates. The stub sits
     between those relocated words and uses only relative addressing (call/pop for the "main"
@@ -200,7 +218,7 @@ def main():
         for n in WINHELP:
             data = src.read(n)
             if n.endswith("winhlp32.exe.so"):
-                data = patch_winhlp(data)
+                data = winhlp32_with_popups() or patch_winhlp(data)
             z.writestr(src.getinfo(n), data)
 
     # --- the games; each in its own folder C:\files\<name>
@@ -271,7 +289,10 @@ Kaiser 1.22a and 1.23 beta (c) Stefan Maday, offered as freeware on the author's
 Boxedwine 26R1 (GPL-2.0) - https://github.com/danoon2/Boxedwine (source: tag 26R1.0)
   boxedwine.js, boxedwine.wasm, boxedwine-shell.js, and the file system boxedwine.zip
 Wine 6.0 (LGPL-2.1) - https://www.winehq.org, as built for Boxedwine
-  boxedwine.zip, winhelp.zip (winhlp32 from https://boxedwine.org/v2/2/TinyCore15Wine6.0.zip)
+  boxedwine.zip, winhelp.zip (from https://boxedwine.org/v2/2/TinyCore15Wine6.0.zip)
+  winhelp.zip: winhlp32.exe.so built from the Wine 6.0 source
+  (https://dl.winehq.org/wine/source/6.0/wine-6.0.tar.xz) with a patch that adds popups for
+  WinHelp(HELP_CONTEXTPOPUP): https://github.com/termi-afk/Kaiser/blob/main/data/wine-6.0-winhlp32-popup.patch
 Arimo (SIL OFL 1.1) - https://github.com/googlefonts/Arimo, unmodified; inside boxedwine.zip in place
   of Liberation Sans (usr/local/share/fonts/liberation/LiberationSans-*.ttf), see LICENSE-Arimo-OFL.txt
 WebAudio-TinySynth 1.1.3 (Apache-2.0) - https://github.com/g200kg/webaudio-tinysynth

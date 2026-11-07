@@ -68,11 +68,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache
-          key: web-sources-${{ hashFiles('tools/build_web.py') }}
+          key: web-sources-${{ hashFiles('tools/build_web.py', 'tools/build_winhlp32.sh', 'data/wine-6.0-winhlp32-popup.patch') }}
           restore-keys: web-sources-
 
       - name: Build web version
         run: |
+          # 32-bit compiler etc. for WinHelp from the Wine source (tools/build_winhlp32.sh)
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-multilib flex bison > /dev/null
           python -m pip install --quiet pillow
           python tools/build_web.py build/site
 

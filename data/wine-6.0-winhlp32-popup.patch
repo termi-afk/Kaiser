@@ -1,0 +1,174 @@
+--- a/programs/winhlp32/macro.c
++++ b/programs/winhlp32/macro.c
+@@ -679,7 +679,11 @@
+ 
+ void CALLBACK MACRO_PopupContext(LPCSTR str, LONG u)
+ {
+-    WINE_FIXME("(%s, %u)\n", debugstr_a(str), u);
++    HLPFILE*    hlpfile;
++
++    WINE_TRACE("(%s, %u)\n", debugstr_a(str), u);
++    if ((hlpfile = WINHELP_LookupHelpFile(str)))
++        WINHELP_OpenContextPopup(hlpfile, u);
+ }
+ 
+ static void CALLBACK MACRO_PopupHash(LPCSTR str, LONG u)
+--- a/programs/winhlp32/winhelp.c
++++ b/programs/winhlp32/winhelp.c
+@@ -327,6 +327,47 @@
+     return &wi;
+ }
+ 
++/******************************************************************
++ *		WINHELP_OpenContextPopup
++ *
++ * Shows a topic, given by its context number, as a popup at the mouse cursor: what an
++ * application gets for WinHelp(HELP_CONTEXTPOPUP) and help files for the PopupContext macro.
++ * The popup closes on the next click, inside or outside of it.
++ */
++BOOL WINHELP_OpenContextPopup(HLPFILE* hlpfile, LONG context)
++{
++    static HLPFILE_WINDOWINFO   wi;
++    POINT                       pt;
++    int                         cxScreen = GetSystemMetrics(SM_CXSCREEN);
++
++    if (Globals.active_popup)
++    {
++        WINHELP_WINDOW* popup = Globals.active_popup;
++        Globals.active_popup = NULL;
++        WINHELP_ReleaseWindow(popup);
++    }
++
++    wi.type[0] = wi.name[0] = wi.caption[0] = '\0';
++    wi.size.cx = min(cxScreen * 2 / 3, 560);
++    wi.size.cy = 10; /* need a non null value, so that borders are taken into account while computing */
++
++    GetCursorPos(&pt);
++    wi.origin.x = pt.x - wi.size.cx / 2;
++    wi.origin.x = min(wi.origin.x, cxScreen - wi.size.cx);
++    wi.origin.x = max(wi.origin.x, 0);
++    wi.origin.y = pt.y + 8;
++
++    wi.style = SW_SHOW;
++    wi.win_style = WS_POPUP | WS_BORDER;
++    if (hlpfile->has_popup_color)
++        wi.sr_color = hlpfile->popup_color;
++    else
++        wi.sr_color = WINHELP_GetWindowInfo(hlpfile, "main")->sr_color;
++    wi.nsr_color = 0xFFFFFF;
++
++    return WINHELP_OpenHelpWindow(HLPFILE_PageByMap, hlpfile, context, &wi, SW_NORMAL);
++}
++
+ typedef struct
+ {
+     WORD size;
+@@ -807,7 +848,7 @@
+                                        bPrimary ? WS_OVERLAPPEDWINDOW : wpage->wininfo->win_style,
+                                        wpage->wininfo->origin.x, wpage->wininfo->origin.y,
+                                        wpage->wininfo->size.cx, wpage->wininfo->size.cy,
+-                                       bPopup ? Globals.active_win->hMainWnd : NULL,
++                                       bPopup && Globals.active_win ? Globals.active_win->hMainWnd : NULL,
+                                        bPrimary ? LoadMenuW(Globals.hInstance, MAKEINTRESOURCEW(MAIN_MENU)) : 0,
+                                        Globals.hInstance, win);
+         if (!bPopup)
+@@ -815,8 +856,11 @@
+             CreateWindowA(BUTTON_BOX_WIN_CLASS_NAME, "", WS_CHILD | WS_VISIBLE,
+                          0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_BUTTON, Globals.hInstance, NULL);
+ 
++        /* a popup is sized to its text, so it only needs a vertical scroll bar when its text is
++         * taller than the screen; a horizontal one would just cover the last line */
+         hTextWnd = CreateWindowA(RICHEDIT_CLASS20A, NULL,
+-                                ES_MULTILINE | ES_READONLY | WS_CHILD | WS_HSCROLL | WS_VSCROLL | WS_VISIBLE,
++                                ES_MULTILINE | ES_READONLY | WS_CHILD | WS_VSCROLL | WS_VISIBLE |
++                                (bPopup ? 0 : WS_HSCROLL),
+                                 0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_TEXT, Globals.hInstance, NULL);
+         SendMessageW(hTextWnd, EM_SETEVENTMASK, 0,
+                     SendMessageW(hTextWnd, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS);
+@@ -852,7 +896,7 @@
+     {
+         DWORD   mask = SendMessageW(hTextWnd, EM_GETEVENTMASK, 0, 0);
+ 
+-        win->font_scale = Globals.active_win->font_scale;
++        win->font_scale = Globals.active_win ? Globals.active_win->font_scale : 1;
+         WINHELP_SetupText(hTextWnd, win, wpage->relative);
+ 
+         /* we need the window to be shown for richedit to compute the size */
+@@ -912,7 +956,9 @@
+                     if (link->window == -1)
+                     {
+                         wi = win->info;
+-                        if (wi->win_style & WS_POPUP) wi = Globals.active_win->info;
++                        if (wi->win_style & WS_POPUP)
++                            wi = Globals.active_win ? Globals.active_win->info
++                                                    : WINHELP_GetWindowInfo(hlpfile, "main");
+                     }
+                     else if (link->window < hlpfile->numWindows)
+                         wi = &hlpfile->windows[link->window];
+@@ -968,9 +1014,10 @@
+         }
+         break;
+     case WM_ACTIVATE:
+-        if (LOWORD(wParam) != WA_INACTIVE || (HWND)lParam == Globals.active_win->hMainWnd ||
++        if (LOWORD(wParam) != WA_INACTIVE ||
+             (HWND)lParam == Globals.active_popup->hMainWnd ||
+-            GetWindow((HWND)lParam, GW_OWNER) == Globals.active_win->hMainWnd)
++            (Globals.active_win && ((HWND)lParam == Globals.active_win->hMainWnd ||
++                                    GetWindow((HWND)lParam, GW_OWNER) == Globals.active_win->hMainWnd)))
+             break;
+         /* fall through */
+     case WM_LBUTTONDOWN:
+@@ -1506,9 +1553,25 @@
+                 win = (WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0);
+                 AdjustWindowRect(&rc, GetWindowLongW(win->hMainWnd, GWL_STYLE),
+                                  FALSE);
+-                SetWindowPos(win->hMainWnd, HWND_TOP, 0, 0,
+-                             rc.right - rc.left, rc.bottom - rc.top,
+-                             SWP_NOMOVE | SWP_NOZORDER);
++                if (win == Globals.active_popup)
++                {
++                    /* keep the popup on the screen: move it up when it reaches below the
++                     * bottom, and cut it to the screen height (the text can then scroll) */
++                    RECT    work, cur;
++                    int     h = rc.bottom - rc.top + 2, y;  /* + 2: no scroll bar for a pixel */
++
++                    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
++                    GetWindowRect(win->hMainWnd, &cur);
++                    h = min(h, work.bottom - work.top);
++                    y = min(cur.top, work.bottom - h);
++                    y = max(y, work.top);
++                    SetWindowPos(win->hMainWnd, HWND_TOP, cur.left, y,
++                                 rc.right - rc.left, h, SWP_NOZORDER);
++                }
++                else
++                    SetWindowPos(win->hMainWnd, HWND_TOP, 0, 0,
++                                 rc.right - rc.left, rc.bottom - rc.top,
++                                 SWP_NOMOVE | SWP_NOZORDER);
+                 WINHELP_LayoutMainWindow(win);
+                 break;
+             }
+@@ -1724,6 +1787,14 @@
+     while ((Globals.win_list || Globals.active_popup) && GetMessageW(&msg, 0, 0, 0))
+     {
+         HWND hWnd = Globals.active_win ? Globals.active_win->hMainWnd : NULL;
++        if (Globals.active_popup && (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN))
++        {
++            /* like on Windows, any key closes a popup */
++            WINHELP_WINDOW* popup = Globals.active_popup;
++            Globals.active_popup = NULL;
++            WINHELP_ReleaseWindow(popup);
++            continue;
++        }
+         if (!TranslateAcceleratorW(hWnd, hAccel, &msg))
+ 	{
+             TranslateMessage(&msg);
+--- a/programs/winhlp32/winhelp.h
++++ b/programs/winhlp32/winhelp.h
+@@ -170,6 +170,7 @@
+ void WINHELP_DeleteBackSet(WINHELP_WINDOW*);
+ HLPFILE* WINHELP_LookupHelpFile(LPCSTR lpszFile);
+ HLPFILE_WINDOWINFO* WINHELP_GetWindowInfo(HLPFILE* hlpfile, LPCSTR name);
++BOOL WINHELP_OpenContextPopup(HLPFILE* hlpfile, LONG context);
+ void WINHELP_LayoutMainWindow(WINHELP_WINDOW* win);
+ WINHELP_WINDOW* WINHELP_GrabWindow(WINHELP_WINDOW*);
+ BOOL WINHELP_ReleaseWindow(WINHELP_WINDOW*);
